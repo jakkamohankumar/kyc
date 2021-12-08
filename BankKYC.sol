@@ -5,7 +5,7 @@ pragma solidity ^0.8.7;
 contract bankKYC {
 
     address admin;
-    uint256 banksCount = 0;
+    uint256 banksCount;
 
     struct customer {
         string userName;
@@ -37,6 +37,7 @@ contract bankKYC {
 
     constructor() {
         admin = msg.sender;
+        banksCount = 0;
     }
 
     /*
@@ -60,7 +61,7 @@ contract bankKYC {
     }
 
     modifier isAllowedToVote(address _ethAddress) {
-        require(bankData[_ethAddress].isAllowedToVote == true, "Bank is not allowed to vote.");
+        require(bankData[_ethAddress].isAllowedToVote != false, "Bank is not allowed to vote.");
         _;
     }
 
@@ -87,10 +88,10 @@ contract bankKYC {
         _;
     }
 
-    modifier performDownVote(string memory _customerName) {
+/*    modifier performDownVote(string memory _customerName) {
         require(customerData[_customerName].downVotes > 0, "Customer's KYC is already invalidated");
         _;
-    }
+    }*/
 
     modifier bankVersusVotes(string memory _customerName) {
         require(customerData[_customerName].upVotes + customerData[_customerName].downVotes <= banksCount, "Customer's upvotes & downvotes together cannot exceed total number of banks");
@@ -98,7 +99,12 @@ contract bankKYC {
     }
 
     modifier kycStatusTrue(string memory _customerName) {
-        require(customerData[_customerName].kycStatus == true, "Customer KYC status is already invalidated.");
+        require(customerData[_customerName].kycStatus != false, "Customer KYC status is already invalidated.");
+        _;
+    }
+
+    modifier reqFromSameBank(string memory _customerName) {
+        require(kycRequestData[_customerName].bankAddress == msg.sender, "Requested is not from same bank.");
         _;
     }
 
@@ -126,6 +132,9 @@ contract bankKYC {
         bool _isAllowedToVote
     ) public isAdmin bankExist(_ethAddress) {
         bankData[_ethAddress].isAllowedToVote = _isAllowedToVote;
+        if (_isAllowedToVote != false) {
+            bankData[_ethAddress].complaintsReported = 0;
+        }
     }
 
     //view bank information
@@ -146,9 +155,15 @@ contract bankKYC {
     function addCustomer (
         string memory _userName,
         string memory _data
-    ) public customerNotExist(_userName) {
+    ) public kycExists(_userName) {    //can kycStatusTrue alone be used instead of using two modifiers?
         //customerData[_userName] = customer(_userName, keccak256(abi.encodePacked(_data)), false, 0, 0, msg.sender);
-        customerData[_userName] = customer(_userName, _data, false, 0, 0, msg.sender);
+        customerData[_userName] = customer(_userName, _data, true, 0, 1, msg.sender);
+        /*
+            it was not clear from requirement on when to set KYC status to true for a customer.
+            so, assumed that the bank that initiated KYC request is also approving it always and hence set the KYC status to true.
+            Please advise.
+        */
+        //customerData[_kycUserName].upVotes++;
     }
 
     //to add a new KYC request for newly added customer & approve KYC status
@@ -156,15 +171,9 @@ contract bankKYC {
         string memory _kycUserName,
         string memory _kycData
     ) public customerNotExist(_kycUserName) kycNotExists(_kycUserName) {
-        //kycRequestData[_kycUserName] = KYC_request(_kycUserName, msg.sender, keccak256(abi.encodePacked(tempVar)));
+        //require(kycRequestData[_kycUserName].bankAddress != msg.sender, "Requested is from same bank.");
+        //kycRequestData[_kycUserName] = KYC_request(_kycUserName, msg.sender, keccak256(abi.encodePacked(_kycData)));
         kycRequestData[_kycUserName] = KYC_request(_kycUserName, msg.sender, _kycData);
-        /*
-            it was not clear from requirement on when to set KYC status to true for a customer.
-            so, assumed that the bank that initiated KYC request is also approving it always and hence set the KYC status to true.
-            Please advise.
-        */
-        customerData[_kycUserName].kycStatus = true;
-        //customerData[_kycUserName].upVotes++;
         bankData[msg.sender].KYC_count++;
     }
 
@@ -173,12 +182,12 @@ contract bankKYC {
     //yet to evaluate how this can be updated to check customer name and bank address combination
     function removeKYCRequest (
         string memory _kycUserName
-    ) public customerExist(_kycUserName) kycExists(_kycUserName) {
+    ) public kycExists(_kycUserName) reqFromSameBank(_kycUserName) {
         delete kycRequestData[_kycUserName];
+        bankData[msg.sender].KYC_count--;
         customerData[_kycUserName].kycStatus = false;
         customerData[_kycUserName].upVotes = 0;
         customerData[_kycUserName].downVotes = 0;
-        bankData[msg.sender].KYC_count--;
     }
 
     //view customer information
@@ -198,7 +207,7 @@ contract bankKYC {
     }
 
     //view bank information
-    function viewBankDetails (
+/*    function viewBankDetails (
         address _ethAddress
     ) public bankExist(_ethAddress) view returns (string memory, address, uint256, uint256, bool, string memory) {
         return (
@@ -209,7 +218,7 @@ contract bankKYC {
             bankData[_ethAddress].isAllowedToVote,
             bankData[_ethAddress].regNumber
         );
-    }
+    }*/
 
     //get bank complaints
     function getBankComplaints (
@@ -242,12 +251,13 @@ contract bankKYC {
         customerData[_customerName].kycStatus = false;
         customerData[_customerName].downVotes = 0;
         customerData[_customerName].upVotes = 0;
+        delete kycRequestData[_customerName];
     }
 
     //upvote a customer's KYC
     function upVoteCustomerKYC (
         string memory _customerName
-    ) public customerExist(_customerName) isAllowedToVote(msg.sender) kycStatusTrue(_customerName) bankVersusVotes(_customerName) {
+    ) public customerExist(_customerName) isAllowedToVote(msg.sender) bankVersusVotes(_customerName) {
         customerData[_customerName].upVotes++;
         updateKYCStatus(_customerName);       
     }
@@ -255,7 +265,7 @@ contract bankKYC {
     //downvote a customer's KYC
     function downVoteCustomeKYC(
         string memory _customerName
-    ) public customerExist(_customerName) isAllowedToVote(msg.sender) kycStatusTrue(_customerName) performDownVote(_customerName) bankVersusVotes(_customerName) {
+    ) public customerExist(_customerName) isAllowedToVote(msg.sender) kycStatusTrue(_customerName) bankVersusVotes(_customerName) {
         customerData[_customerName].downVotes++;
         updateKYCStatus(_customerName);
     } 
@@ -270,7 +280,7 @@ contract bankKYC {
                 if the total number of banks partifipated in voting should be considered
             so, the total number of banks is used here. Please advise.
         */
-        if (customerData[_customerName].upVotes > customerData[_customerName].downVotes && customerData[_customerName].downVotes < (banksCount/3)) {
+        if (customerData[_customerName].upVotes > customerData[_customerName].downVotes && (banksCount/3) >= customerData[_customerName].downVotes) {
             customerData[_customerName].kycStatus = true;
         } else {
             customerData[_customerName].kycStatus = false;
